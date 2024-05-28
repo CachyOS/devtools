@@ -77,6 +77,7 @@ usage() {
 	echo '                  This is useful for rebuilds without dirtying the pristine'
 	echo '                  chroot'
 	echo '-r <dir>          The chroot dir to use'
+	echo '-P <dir>          Set pacman cache'
 	echo '-I <pkg>          Install a package into the working copy of the chroot'
 	echo '-l <copy>         The directory to use as the working copy of the chroot'
 	echo '                  Useful for maintaining multiple copies'
@@ -152,7 +153,7 @@ install_packages() {
 	pkgnames=("${install_pkgs[@]##*/}")
 
 	cp -- "${install_pkgs[@]}" "$copydir/root/"
-	arch-nspawn "$copydir" \
+	arch-nspawn "${cache_dirs[@]}" "$copydir" \
 		--machine="$(machine_name install-packages)" \
 		"${bindmounts_ro[@]}" "${bindmounts_rw[@]}" "${bindmounts_tmpfs[@]}" \
 		pacman -U --noconfirm --ask=4 -- "${pkgnames[@]/#//root/}"
@@ -298,7 +299,7 @@ move_products() {
 }
 # }}}
 
-while getopts 'hcur:I:l:nCTD:d:U:x:t:' arg; do
+while getopts 'hcur:I:l:nCTD:d:U:x:t:P:' arg; do
 	case "$arg" in
 		c) clean_first=1 ;;
 		D) bindmounts_ro+=("--bind-ro=$OPTARG") ;;
@@ -313,6 +314,10 @@ while getopts 'hcur:I:l:nCTD:d:U:x:t:' arg; do
 		T) temp_chroot=1; copy+="-$$" ;;
 		U) makepkg_user="$OPTARG" ;;
 		x) inspect="$OPTARG" ;;
+		P)
+		   cache_dirs+=("-c")
+		   cache_dirs+=("$OPTARG")
+		   ;;
 		h|*) usage ;;
 	esac
 done
@@ -372,7 +377,7 @@ if [[ ! -d $copydir ]] || (( clean_first )); then
 	sync_chroot "$chrootdir" "$copydir" "$copy"
 fi
 
-(( update_first )) && arch-nspawn "$copydir" \
+(( update_first )) && arch-nspawn "${cache_dirs[@]}" "$copydir" \
 		--machine="$(machine_name upgrade-packages)" \
 		"${bindmounts_ro[@]}" "${bindmounts_rw[@]}" "${bindmounts_tmpfs[@]}" \
 		pacman -Syuu --noconfirm
@@ -410,7 +415,7 @@ nspawn_build_args=(
 		printf "%s\n" "${pkgbase:-${pkgname}}" "${pkgname[@]}"
 ')
 
-if arch-nspawn "$copydir" \
+if arch-nspawn "${cache_dirs[@]}" "$copydir" \
 	"${nspawn_build_args[@]}" \
 	--machine="$(machine_name "${pkgbase}.build")" \
 	/chrootbuild "${makepkg_args[@]}"
@@ -429,7 +434,7 @@ if [[ $inspect == always ]] || ( [[ $inspect == failure ]] && (( ret != 0 )) ); 
 	fi
 	# Use a short machine name without dots so the shell picks it up
 	# as part of the window title
-	arch-nspawn "$copydir" \
+	arch-nspawn "${cache_dirs[@]}" "$copydir" \
 		"${nspawn_build_args[@]}" \
 		--machine="$(machine_name "${pkgbase}.inspect")" \
 		--user=builduser \
@@ -461,7 +466,7 @@ else
 		for remotepkg in "${remotepkgs[@]}"; do
 			if [[ $remotepkg != file://* ]]; then
 				msg2 "Downloading current versions"
-				arch-nspawn "$copydir" \
+				arch-nspawn "${cache_dirs[@]}" "$copydir" \
 					--machine="$(machine_name "${pkgbase}.checkpkg")" \
 					pacman --noconfirm -Swdd "${pkgnames[@]}"
 				mapfile -t remotepkgs < <(pacman --config "$copydir"/etc/pacman.conf \

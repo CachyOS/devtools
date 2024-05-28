@@ -75,6 +75,7 @@ usage() {
 	echo '                  This is useful for rebuilds without dirtying the pristine'
 	echo '                  chroot'
 	echo '-r <dir>          The chroot dir to use'
+	echo '-P <dir>          Set pacman cache'
 	echo '-I <pkg>          Install a package into the working copy of the chroot'
 	echo '-l <copy>         The directory to use as the working copy of the chroot'
 	echo '                  Useful for maintaining multiple copies'
@@ -150,7 +151,7 @@ install_packages() {
 	pkgnames=("${install_pkgs[@]##*/}")
 
 	cp -- "${install_pkgs[@]}" "$copydir/root/"
-	arch-nspawn "$copydir" "${bindmounts_ro[@]}" "${bindmounts_rw[@]}" "${bindmounts_tmpfs[@]}" \
+	arch-nspawn "${cache_dirs[@]}" "$copydir" "${bindmounts_ro[@]}" "${bindmounts_rw[@]}" "${bindmounts_tmpfs[@]}" \
 		pacman -U --noconfirm --ask=4 -- "${pkgnames[@]/#//root/}"
 	ret=$?
 	rm -- "${pkgnames[@]/#/$copydir/root/}"
@@ -293,7 +294,7 @@ move_products() {
 }
 # }}}
 
-while getopts 'hcur:I:l:nCTD:d:U:x:t:' arg; do
+while getopts 'hcur:I:l:nCTD:d:U:x:t:P:' arg; do
 	case "$arg" in
 		c) clean_first=1 ;;
 		D) bindmounts_ro+=("--bind-ro=$OPTARG") ;;
@@ -308,6 +309,10 @@ while getopts 'hcur:I:l:nCTD:d:U:x:t:' arg; do
 		T) temp_chroot=1; copy+="-$$" ;;
 		U) makepkg_user="$OPTARG" ;;
 		x) inspect="$OPTARG" ;;
+		P)
+		   cache_dirs+=("-c")
+		   cache_dirs+=("$OPTARG")
+		   ;;
 		h|*) usage ;;
 	esac
 done
@@ -367,7 +372,7 @@ if [[ ! -d $copydir ]] || (( clean_first )); then
 	sync_chroot "$chrootdir" "$copydir" "$copy"
 fi
 
-(( update_first )) && arch-nspawn "$copydir" \
+(( update_first )) && arch-nspawn "${cache_dirs[@]}" "$copydir" \
 		"${bindmounts_ro[@]}" "${bindmounts_rw[@]}" "${bindmounts_tmpfs[@]}" \
 		pacman -Syuu --noconfirm
 
@@ -396,7 +401,7 @@ nspawn_build_args=(
 	"${bindmounts_tmpfs[@]}"
 )
 
-if arch-nspawn "$copydir" \
+if arch-nspawn "${cache_dirs[@]}" "$copydir" \
 	"${nspawn_build_args[@]}" \
 	/chrootbuild "${makepkg_args[@]}"
 then
@@ -413,7 +418,7 @@ if [[ $inspect == always ]] || ( [[ $inspect == failure ]] && (( ret != 0 )) ); 
 	else
 		error "Build failed, inspecting %s" "$copydir"
 	fi
-	arch-nspawn "$copydir" \
+	arch-nspawn "${cache_dirs[@]}" "$copydir" \
 		"${nspawn_build_args[@]}" \
 		--user=builduser \
 		--chdir=/build
@@ -444,7 +449,7 @@ else
 		for remotepkg in "${remotepkgs[@]}"; do
 			if [[ $remotepkg != file://* ]]; then
 				msg2 "Downloading current versions"
-				arch-nspawn "$copydir" pacman --noconfirm -Swdd "${pkgnames[@]}"
+				arch-nspawn "${cache_dirs[@]}" "$copydir" pacman --noconfirm -Swdd "${pkgnames[@]}"
 				mapfile -t remotepkgs < <(pacman --config "$copydir"/etc/pacman.conf \
 					--dbpath "$copydir"/var/lib/pacman \
 					-Sddp "${pkgnames[@]}")

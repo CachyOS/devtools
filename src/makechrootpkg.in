@@ -86,6 +86,7 @@ usage() {
 	echo '-C                Run checkpkg on the package'
 	echo '-T                Build in a temporary directory'
 	echo '-U                Run makepkg as a specified user'
+	echo '-V                Build in a private network namespace'
 	echo '-x <when>         Inspect chroot after build (never, always, failure)'
 	exit 1
 }
@@ -228,6 +229,16 @@ _chrootbuild() {
 	# shellcheck source=/dev/null
 	. /etc/profile
 
+	# for network-veth systemd feature to work correctly it needs networkd,
+	# both on the host and inside of a systemd-nspawn container
+	if [[ -e /sys/class/net/host0 ]]; then
+		local caps=+net_admin,+net_bind_service,+net_broadcast,+net_raw
+		install -d -o systemd-network -g systemd-network /run/systemd/netif{,/links,/leases}
+		setpriv --reuid=systemd-network --regid=systemd-network --clear-groups \
+			--inh-caps="$caps" --ambient-caps="$caps" /usr/lib/systemd/systemd-networkd &
+		/usr/lib/systemd/systemd-networkd-wait-online --interface=host0:routable --ipv4 --timeout=60 || return
+	fi
+
 	# Beware, there are some stupid arbitrary rules on how you can
 	# use "$" in arguments to commands with "sudo -i".  ${foo} or
 	# ${1} is OK, but $foo or $1 isn't.
@@ -299,7 +310,7 @@ move_products() {
 }
 # }}}
 
-while getopts 'hcur:I:l:nCTD:d:U:x:t:P:' arg; do
+while getopts 'hcur:I:l:nCTVD:d:U:x:t:P:' arg; do
 	case "$arg" in
 		c) clean_first=1 ;;
 		D) bindmounts_ro+=("--bind-ro=$OPTARG") ;;
@@ -313,6 +324,7 @@ while getopts 'hcur:I:l:nCTD:d:U:x:t:P:' arg; do
 		C) run_checkpkg=1 ;;
 		T) temp_chroot=1; copy+="-$$" ;;
 		U) makepkg_user="$OPTARG" ;;
+		V) private_network=1 ;;
 		x) inspect="$OPTARG" ;;
 		P)
 		   cache_dirs+=("-c")
@@ -406,6 +418,15 @@ nspawn_build_args=(
 	"${bindmounts_rw[@]}"
 	"${bindmounts_tmpfs[@]}"
 )
+
+if (( private_network )); then
+	nspawn_build_args+=(--network-veth)
+	if [[ -f /run/systemd/resolve/resolv.conf ]]; then
+		nspawn_build_args+=(--resolv-conf=copy-uplink)
+	else
+		nspawn_build_args+=(--resolv-conf=copy-host)
+	fi
+fi
 
 {
 	read -r -d $'\n' pkgbase

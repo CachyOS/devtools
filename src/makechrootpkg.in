@@ -235,7 +235,7 @@ _chrootbuild() {
 		local caps=+net_admin,+net_bind_service,+net_broadcast,+net_raw
 		install -d -o systemd-network -g systemd-network /run/systemd/netif{,/links,/leases}
 		setpriv --reuid=systemd-network --regid=systemd-network --clear-groups \
-			--inh-caps="$caps" --ambient-caps="$caps" /usr/lib/systemd/systemd-networkd &
+			--inh-caps="$caps" --ambient-caps="$caps" /usr/lib/systemd/systemd-networkd >/dev/null 2>&1 &
 		/usr/lib/systemd/systemd-networkd-wait-online --interface=host0:routable --ipv4 --timeout=60 || return
 	fi
 
@@ -421,6 +421,8 @@ nspawn_build_args=(
 
 if (( private_network )); then
 	nspawn_build_args+=(--network-veth)
+
+	export SYSTEMD_LOG_LEVEL=${SYSTEMD_LOG_LEVEL:-err}
 	if [[ -f /run/systemd/resolve/resolv.conf ]]; then
 		nspawn_build_args+=(--resolv-conf=copy-uplink)
 	else

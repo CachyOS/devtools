@@ -34,6 +34,7 @@ clean_first=0
 run_namcap=0
 run_checkpkg=0
 temp_chroot=0
+delete_copy=0
 tmp_opts="nosuid,nodev,size=50%,nr_inodes=2m"
 
 inspect=never
@@ -69,7 +70,7 @@ usage() {
 	echo ''
 	echo 'Flags:'
 	echo '-h                This help'
-	echo '-c                Clean the chroot before building'
+	echo '-c                Clean the chroot before building and remove it afterwards'
 	echo '-d <dir>          Bind directory into build chroot as read-write'
 	echo '-D <dir>          Bind directory into build chroot as read-only'
 	echo '-t <dir[:opts]>   Mount a tmpfs at directory'
@@ -145,6 +146,17 @@ delete_chroot() {
 	# remove lock file
 	rm -f "$copydir.lock"
 	stat_done
+}
+
+# Wraps cleanup from common.sh
+eval "_common_$(declare -f cleanup)"
+cleanup() {
+	if (( delete_copy )) && [[ -d $copydir ]] && ! [[ "$chrootdir/root" -ef "$copydir" ]]; then
+		# delete_chroot may die, which re-enters cleanup
+		delete_copy=0
+		delete_chroot "$copydir" "$copy"
+	fi
+	_common_cleanup "$@"
 }
 
 install_packages() {
@@ -385,6 +397,11 @@ HOME=$ORIG_HOME
 # Lock the chroot we want to use. We'll keep this lock until we exit.
 lock 9 "$copydir.lock" "Locking chroot copy [%s]" "$copy"
 
+# A temporary or freshly synced copy is never reused anyways, so remove it on every
+# exit path instead of leaving a root-owned tree behind for the caller.
+delete_copy=$(( temp_chroot || clean_first ))
+setup_workdir
+
 if [[ ! -d $copydir ]] || (( clean_first )); then
 	sync_chroot "$chrootdir" "$copydir" "$copy"
 fi
@@ -464,10 +481,8 @@ if [[ $inspect == always ]] || ( [[ $inspect == failure ]] && (( ret != 0 )) ); 
 		--chdir=/build
 fi
 
-(( temp_chroot )) && delete_chroot "$copydir" "$copy"
-
 if (( ret != 0 )); then
-	if (( temp_chroot )); then
+	if (( delete_copy )); then
 		die "Build failed"
 	else
 		die "Build failed, check %s/build" "$copydir"

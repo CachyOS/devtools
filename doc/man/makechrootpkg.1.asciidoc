@@ -37,7 +37,7 @@ Options
 	Show this usage message
 
 *-c*::
-	Clean the chroot before building
+	Clean the chroot before building and remove it afterwards
 
 *-d* <dir>::
 	Bind directory into build chroot as read-write
